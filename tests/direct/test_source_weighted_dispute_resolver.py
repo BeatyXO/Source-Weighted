@@ -379,6 +379,58 @@ def test_keyed_model_items_are_accepted(direct_vm, direct_deploy, direct_alice):
     assert rec["claimant_score"] == 50
 
 
+def test_numeric_wrapped_model_items_are_accepted(direct_vm, direct_deploy, direct_alice):
+    contract = deploy(direct_deploy, direct_vm)
+    create_policy(contract, direct_vm, direct_alice)
+    dispute_id = open_default(contract, direct_vm, direct_alice)
+    submit(contract, direct_vm, direct_alice, dispute_id, "CLAIMANT", "OFFICIAL")
+    lock(contract, direct_vm, dispute_id, direct_alice)
+    mock_assessment(direct_vm, [{"0": item(0, "CLAIMANT")}])
+    contract.resolve_dispute(dispute_id)
+    rec = dispute(contract, dispute_id)
+    assert rec["verdict"] == "INCONCLUSIVE"
+    assert rec["claimant_score"] == 50
+
+
+def test_url_evidence_is_fetched_before_classification(direct_vm, direct_deploy, direct_alice):
+    contract = deploy(direct_deploy, direct_vm)
+    create_policy(contract, direct_vm, direct_alice)
+    dispute_id = open_default(contract, direct_vm, direct_alice)
+    submit(contract, direct_vm, direct_alice, dispute_id, "CLAIMANT", "OFFICIAL", "https://registry.example/reserves/gamma")
+    lock(contract, direct_vm, dispute_id, direct_alice)
+    direct_vm.clear_mocks()
+    direct_vm.mock_web(
+        r"https://registry\.example/reserves/gamma",
+        {"status": 200, "body": "Provider Gamma reserves verified for July by the official registry."},
+    )
+    direct_vm.mock_llm(
+        r".*contract_fetched_excerpt.*Provider Gamma reserves verified for July.*",
+        assessment([item(0, "CLAIMANT")]),
+    )
+    contract.resolve_dispute(dispute_id)
+    rec = dispute(contract, dispute_id)
+    assert rec["claimant_score"] == 50
+    assert rec["verdict"] == "INCONCLUSIVE"
+
+
+def test_unfetched_url_is_not_treated_as_supporting_notes(direct_vm, direct_deploy, direct_alice):
+    contract = deploy(direct_deploy, direct_vm)
+    create_policy(contract, direct_vm, direct_alice)
+    dispute_id = open_default(contract, direct_vm, direct_alice)
+    submit(contract, direct_vm, direct_alice, dispute_id, "CLAIMANT", "OFFICIAL", "https://registry.example/missing")
+    lock(contract, direct_vm, dispute_id, direct_alice)
+    direct_vm.clear_mocks()
+    direct_vm.mock_llm(
+        r".*source_fetch_status.*UNREADABLE.*",
+        assessment([item(0, "NEITHER", reliability="UNREADABLE", strength="NONE")]),
+    )
+    contract.resolve_dispute(dispute_id)
+    rec = dispute(contract, dispute_id)
+    assert rec["verdict"] == "EXTERNAL_FAILURE"
+    assert rec["claimant_score"] == 0
+    assert rec["unusable_score"] == 50
+
+
 def test_split_verdict_when_both_sides_cross_without_margin(direct_vm, direct_deploy, direct_alice):
     contract = deploy(direct_deploy, direct_vm)
     create_policy(contract, direct_vm, direct_alice)

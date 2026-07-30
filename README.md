@@ -20,7 +20,7 @@ flowchart LR
     F --> G["Verdict stored for pull read or callback"]
 ```
 
-Policy creators choose a minimum score, margin, and weights for `OFFICIAL`, `AUDITED`, `PRIMARY`, `EXPERT`, `NEWS`, `COMMUNITY`, and `PARTY` evidence. Validators classify each evidence item into enumerated buckets:
+Policy creators choose a minimum score, margin, and weights for `OFFICIAL`, `AUDITED`, `PRIMARY`, `EXPERT`, `NEWS`, `COMMUNITY`, and `PARTY` evidence. Evidence can be submitted as bounded text or as an HTTP(S) URL. URL evidence is fetched inside `resolve_dispute` with `gl.nondet.web.render`, capped into a compact excerpt, and passed to validators with an explicit `FETCHED` or `UNREADABLE` status. Validators classify each evidence item into enumerated buckets:
 
 - supports: `CLAIMANT`, `RESPONDENT`, `NEITHER`, `CONFLICTING`
 - reliability: `ACCEPTED`, `STALE`, `UNREADABLE`, `OUT_OF_SCOPE`
@@ -30,15 +30,15 @@ The contract then applies deterministic scoring: high evidence gets 100 percent 
 
 ## Consensus Boundary
 
-Nondeterminism is limited to one block: `resolve_dispute` asks validators to classify the locked evidence. It uses `gl.eq_principle.prompt_comparative` because the work is semantic judgement.
+Nondeterminism is limited to one write method: `resolve_dispute`. It can perform up to one contract-side web render per URL evidence item, then asks validators to classify the locked evidence. It uses `gl.eq_principle.prompt_comparative` because the work is semantic judgement over external evidence.
 
 Equivalence principle:
 
 > Validator outputs are equivalent only when they make the same material classification for every requested evidence item: same support side, same reliability bucket, and same strength bucket. Wording, ordering, casing, and explanation phrasing may differ. A different verdict-relevant bucket, missing requested item, invented item, different party support, or different reliability/strength category is not equivalent.
 
-Everything else is deterministic: access checks, length caps, source normalization, time windows, counters, scoring, verdict thresholds, retries for inconclusive/external failure, callback rules, and archive rules.
+Everything else is deterministic: access checks, length caps, source normalization, URL detection, fetch-status handling, time windows, counters, scoring, verdict thresholds, retries for inconclusive/external failure, callback rules, and archive rules.
 
-Failure is explicit. Unparseable model output, omitted items, invented items, or unusable evidence cannot silently become proof. The contract records `EXTERNAL_FAILURE` or `INCONCLUSIVE` and leaves the dispute retryable until timeout.
+Failure is explicit. Unparseable model output, omitted items, invented items, unreadable fetched sources, or unusable evidence cannot silently become proof. The contract records `EXTERNAL_FAILURE` or `INCONCLUSIVE` and leaves the dispute retryable until timeout.
 
 ## Reuse
 
@@ -94,7 +94,7 @@ gltest tests\integration\ -v -s --network studionet
 
 ## Measured Status
 
-Contract lines: 780. Consumer example lines: 80. Direct tests: 40 passing.
+Contract lines: 915. Consumer example lines: 80. Direct tests: 43 passing.
 
 Lint:
 
@@ -103,30 +103,30 @@ Lint:
 
 StudioNet deployed contract:
 
-`0x897B810490a1e7E701D30D52067f21cccee5Db22`
+`0xB1b739Ad0ed8db672BD1eA0F4341e84Ab7567bD8`
 
 Deploy tx:
 
-`0xfe174c82ea0a75665b50371ebb00f3666d44ec1a485c3b0a67f871a3ed5042e6`
+`0x173c0905e68b5c7c409041acbd49e0d909c865af4b60ae9c5ad06156c4d1c33e`
 
 Live writes executed:
 
 | Method | Tx | Result |
 |---|---|---|
-| `create_policy` | `0x2533ae50a32e477e78a1bed00ea70cabc5110eddabc73ff456ad0b94860c512d` | policy `1`, accepted |
-| `open_dispute` | `0xba647b25148505bf705e07b812dcf57e8e0256beb8e449e2c47d8024c55a7d9b` | dispute `1`, accepted |
-| `submit_evidence` | `0x66e71001fd54bdbe164c1bcb3115383fa10607a61407123b76d7f39f7f8a7630` | accepted |
-| `lock_evidence` | `0xc1c957867fd1e0a7fc7d768490d7cb2d84d592b818fce2c88b1b71a08a53b1cc` | accepted |
-| `resolve_dispute` | `0x04d68bf3b617d318ed07cb445583942dd2f83d367ab335128c8990f519b2d033` | accepted, verdict `CLAIMANT` |
-| `send_callback` | `0x3bd5ddf396e6dad37df6bbb106bc6680fbb995ae7b411cabe559901e2e341d38` | expected rollback: `EXPECTED: no callback` |
-| `archive_dispute` | `0x55245a3c5376a47e5f5fc7213923577d5813de4e186575e18a78659eb7daaaf9` | accepted |
-| `create_policy` | `0x26284310db3d503177c499448fe09076b938cb173a6a07bd1d1dcba6c3da7db1` | policy `2`, accepted |
-| `deactivate_policy` | `0xe083b8a63420c432746c4a11dc6494d52dc9acbf8ad0199e13ead9199f734fe2` | accepted |
+| `create_policy` | `0xffd140278c189df931ed5916bf778ffb3a1d5b322ee477934a8c7022460e6f1c` | policy `1`, accepted |
+| `open_dispute` | `0x52326216cac834abbce25c426d6b60ab0bd96252e735af432d61380b7dda97aa` | dispute `1`, accepted |
+| `submit_evidence` | `0x146d461ff35761cd58040934cbf5a1c397622ed97c442da4cf737b655ed17696` | URL evidence accepted |
+| `lock_evidence` | `0x7f35469483bee8ef44ec6522e0ed78adc7727c2894727e18df92534fc7fa9108` | accepted |
+| `resolve_dispute` | `0xf08a7487f91cf021743dd543ec64225237e88756b5c763c1b7d09a3ea88e8160` | accepted, contract-fetched URL evidence, verdict `CLAIMANT` |
+| `send_callback` | `0x30c75fb0d5dedb53ddcbaeb87a366b1756f3c117b6385c3d9b5f44db665204de` | expected rollback: `EXPECTED: no callback` |
+| `archive_dispute` | `0x9c7fb093165ed5c816f7d45d4351652c65cab31b2b4ec28147db47a7b4e3d617` | accepted |
+| `create_policy` | `0x236ec05b80893708375af320ae2294d4ee9523cd75e7582e63347834175f1e95` | policy `2`, accepted |
+| `deactivate_policy` | `0x987372fca9760e29a5aec7bdd0018971b84d539af563841233d4ac8bcd97c455` | accepted |
 
 Live readback after resolution:
 
 - `dispute_of(1)`: status `RESOLVED` before archive, verdict `CLAIMANT`, claimant score `50`, respondent score `0`
-- `assessment_of(1)`: item `0` supports `CLAIMANT`, reliability `ACCEPTED`, strength `HIGH`
+- `assessment_of(1)`: item `0` supports `CLAIMANT`, reliability `ACCEPTED`, strength `HIGH`, with reason based on the contract-fetched `https://example.com` excerpt
 - final `dispute_status(1)`: `ARCHIVED`
 - final `dispute_verdict(1)`: `CLAIMANT`
 - final `stats()`: next policy `3`, next dispute `2`, active policies `1`, resolved `1`, archived `1`
@@ -138,5 +138,6 @@ Live readback after resolution:
 
 This primitive is wrong for deterministic facts, numeric feeds, or cases where one authoritative API can be trusted directly. It also should not be used when evidence cannot be shared with validators.
 
-StudioNet validator receipts can include `IDLE` after quorum. That occurred in accepted writes and did not affect final state. The live `resolve_dispute` tx reached `MAJORITY_AGREE` with 3 agree and 2 idle. The `gltest` StudioNet nondeterministic route canceled before validator rounds in earlier runs; the CLI deployment/write route is the measured on-chain proof for this submission.
+URL fetching is intentionally conservative: it supports public HTTP(S) evidence available to GenLayer's renderer, caps fetched excerpts, and treats failed reads as `UNREADABLE` rather than proof. It does not authenticate private, paywalled, login-gated, or cryptographically signed documents by itself; importers should choose policy weights and accepted source classes accordingly.
 
+StudioNet validator receipts can include `IDLE` after quorum. That occurred in accepted writes and did not affect final state. The live `resolve_dispute` tx reached `MAJORITY_AGREE` with 3 agree and 2 idle. The `gltest` StudioNet nondeterministic route canceled before validator rounds in earlier runs; the CLI deployment/write route is the measured on-chain proof for this submission.
