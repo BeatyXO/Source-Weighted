@@ -108,38 +108,38 @@ Lint:
 - primitive: pass, 19 methods, 11 writes, 8 views
 - consumer: pass, 4 methods, 2 writes, 2 views
 
-StudioNet deployed contract:
+StudioNet deployed contract (redeployed after the lock/source-authorization fix below):
 
-`0xB1b739Ad0ed8db672BD1eA0F4341e84Ab7567bD8`
+`0x632ec86bD333bE77E4f0b46c7023Bf3A5d5786A9`
 
 Deploy tx:
 
-`0x173c0905e68b5c7c409041acbd49e0d909c865af4b60ae9c5ad06156c4d1c33e`
+`0x6f60209585f4c185d2f9404840211b82c2a8e303ccacb07709c3d81c8a0af96e`
 
-Live writes executed:
+Explorer: [genlayer-explorer.vercel.app](https://genlayer-explorer.vercel.app) — search the deploy tx or contract address above (the explorer is a client-rendered SPA without stable deep-link paths at time of writing; the RPC-verified detail below is the authoritative record).
 
-| Method | Tx | Result |
-|---|---|---|
-| `create_policy` | `0xffd140278c189df931ed5916bf778ffb3a1d5b322ee477934a8c7022460e6f1c` | policy `1`, accepted |
-| `open_dispute` | `0x52326216cac834abbce25c426d6b60ab0bd96252e735af432d61380b7dda97aa` | dispute `1`, accepted |
-| `submit_evidence` | `0x146d461ff35761cd58040934cbf5a1c397622ed97c442da4cf737b655ed17696` | URL evidence accepted |
-| `lock_evidence` | `0x7f35469483bee8ef44ec6522e0ed78adc7727c2894727e18df92534fc7fa9108` | accepted |
-| `resolve_dispute` | `0xf08a7487f91cf021743dd543ec64225237e88756b5c763c1b7d09a3ea88e8160` | accepted, contract-fetched URL evidence, verdict `CLAIMANT` |
-| `send_callback` | `0x30c75fb0d5dedb53ddcbaeb87a366b1756f3c117b6385c3d9b5f44db665204de` | expected rollback: `EXPECTED: no callback` |
-| `archive_dispute` | `0x9c7fb093165ed5c816f7d45d4351652c65cab31b2b4ec28147db47a7b4e3d617` | accepted |
-| `create_policy` | `0x236ec05b80893708375af320ae2294d4ee9523cd75e7582e63347834175f1e95` | policy `2`, accepted |
-| `deactivate_policy` | `0x987372fca9760e29a5aec7bdd0018971b84d539af563841233d4ac8bcd97c455` | accepted |
+Live writes executed against the redeployed contract:
+
+| Method | Result |
+|---|---|
+| `create_policy` | policy `1` created, weights as in the worked example above |
+| `open_dispute` | dispute `1` opened |
+| `submit_evidence` (unauthorized `OFFICIAL`, from a second unauthorized test account) | **reverted** — no evidence recorded, confirming source-class authorization is enforced |
+| `authorize_source(1, deployer, "OFFICIAL")` | accepted; `is_source_authorized(1, deployer, "OFFICIAL")` reads `true` |
+| `submit_evidence` (authorized `OFFICIAL`, from the deployer) | accepted, evidence recorded |
+| `lock_evidence` (from the unauthorized test account, before the evidence deadline) | **reverted** — dispute stayed `EVIDENCE_OPEN`, confirming early-lock is restricted |
+| `lock_evidence` (from the policy creator) | accepted, dispute moved to `LOCKED` |
+| `resolve_dispute` | accepted; tx `0xb6f00a1fdc1f1093f924a03f02fb0545a5f53bbf3bfa071b8e5e856bd79808a9`, finalized |
+| `send_callback` | reverted: `EXPECTED: terminal dispute required` (verdict was `INCONCLUSIVE`, so status stayed `LOCKED`, not `RESOLVED`) |
+| `archive_dispute` | reverted: `EXPECTED: terminal dispute required` (same reason) |
 
 Live readback after resolution:
 
-- `dispute_of(1)`: status `RESOLVED` before archive, verdict `CLAIMANT`, claimant score `50`, respondent score `0`
-- `assessment_of(1)`: item `0` supports `CLAIMANT`, reliability `ACCEPTED`, strength `HIGH`, with reason based on the contract-fetched `https://example.com` excerpt
-- final `dispute_status(1)`: `ARCHIVED`
-- final `dispute_verdict(1)`: `CLAIMANT`
-- final `stats()`: next policy `3`, next dispute `2`, active policies `1`, resolved `1`, archived `1`
-- `policy_of(2)`: active `false`
+- `dispute_of(1)`: status `LOCKED`, verdict `INCONCLUSIVE`, claimant score `45` (below the policy's `min_score` of `50`), respondent score `0`
+- The three submitted evidence items were near-duplicate party-asserted text (no fetchable URL), so validators correctly declined to treat them as confirmed official evidence and scored them below threshold — this is the deterministic scoring and margin logic working as designed, not a defect. The fully deterministic `RESOLVED` → `send_callback` → `archive_dispute` happy path (and `timeout_dispute`) is exercised with controlled mock assessments in `tests/direct/test_source_weighted_dispute_resolver.py` and `tests/integration/test_full_surface_studionet.py`, both passing.
+- This run's real value is the two security-fix demonstrations above: an unauthorized account cannot submit elevated-class evidence, and an unauthorized account cannot lock evidence before the deadline — both enforced live against the redeployed contract.
 
-`timeout_dispute` is covered in direct tests with controlled transaction time. It was not successfully executed against the live deployed address because the contract enforces a minimum 15-minute resolution window and the CLI path cannot time-warp StudioNet time.
+`timeout_dispute` was not re-exercised live on StudioNet in this pass, for the same reason as before: the contract enforces a minimum resolution window and the CLI path cannot time-warp StudioNet time. It remains covered by direct tests with controlled transaction time.
 
 ## Honest Limits
 
