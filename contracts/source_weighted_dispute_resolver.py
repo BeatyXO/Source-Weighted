@@ -157,6 +157,35 @@ class SourceWeightedDisputeResolver(gl.Contract):
         return policy_id
 
     @gl.public.write
+    def authorize_source(self, policy_id: u256, account: Address, source_class: str) -> None:
+        policy = self._policy(policy_id)
+        sender = self._coerce_address(gl.message.sender_address)
+        if sender != Address(policy["creator"]) and sender != self.owner:
+            raise gl.vm.UserError("EXPECTED: only policy creator or owner")
+        clean_source = self._normalize_source(source_class)
+        if clean_source in (SOURCE_COMMUNITY, SOURCE_PARTY):
+            raise gl.vm.UserError("EXPECTED: this source class does not require authorization")
+        key = self._source_auth_key(policy_id, clean_source, self._coerce_address(account))
+        self.ledger[key] = json.dumps({"authorized": True, "granted_at": self._now_iso()})
+
+    @gl.public.write
+    def revoke_source(self, policy_id: u256, account: Address, source_class: str) -> None:
+        policy = self._policy(policy_id)
+        sender = self._coerce_address(gl.message.sender_address)
+        if sender != Address(policy["creator"]) and sender != self.owner:
+            raise gl.vm.UserError("EXPECTED: only policy creator or owner")
+        clean_source = self._normalize_source(source_class)
+        key = self._source_auth_key(policy_id, clean_source, self._coerce_address(account))
+        if key in self.ledger:
+            del self.ledger[key]
+
+    @gl.public.view
+    def is_source_authorized(self, policy_id: u256, account: Address, source_class: str) -> bool:
+        clean_source = self._normalize_source(source_class)
+        key = self._source_auth_key(policy_id, clean_source, self._coerce_address(account))
+        return key in self.ledger
+
+    @gl.public.write
     def deactivate_policy(self, policy_id: u256) -> None:
         policy = self._policy(policy_id)
         sender = self._coerce_address(gl.message.sender_address)
@@ -233,6 +262,13 @@ class SourceWeightedDisputeResolver(gl.Contract):
             raise gl.vm.UserError("EXPECTED: evidence window passed")
         clean_side = self._normalize_side(side)
         clean_source = self._normalize_source(source_class)
+        sender = self._coerce_address(gl.message.sender_address)
+        if clean_source not in (SOURCE_COMMUNITY, SOURCE_PARTY):
+            auth_key = self._source_auth_key(u256(int(rec["policy_id"])), clean_source, sender)
+            if auth_key not in self.ledger:
+                raise gl.vm.UserError(
+                    "EXPECTED: sender not authorized for source class " + clean_source
+                )
         if len(uri_or_text) == 0 or len(uri_or_text) > MAX_EVIDENCE_LEN:
             raise gl.vm.UserError("EXPECTED: invalid evidence length")
         if len(notes) > MAX_NOTES_LEN:
@@ -246,7 +282,7 @@ class SourceWeightedDisputeResolver(gl.Contract):
                 "source_class": clean_source,
                 "uri_or_text": self._compact(uri_or_text, MAX_EVIDENCE_LEN),
                 "notes": self._compact(notes, MAX_NOTES_LEN),
-                "submitter": str(self._coerce_address(gl.message.sender_address)),
+                "submitter": str(sender),
                 "submitted_at": self._now_iso(),
             }
         )
@@ -261,6 +297,18 @@ class SourceWeightedDisputeResolver(gl.Contract):
             raise gl.vm.UserError("EXPECTED: evidence not open")
         if int(rec["evidence_count"]) == 0:
             raise gl.vm.UserError("EXPECTED: evidence required")
+        deadline_passed = self._after(self._now_iso(), str(rec["evidence_deadline"]))
+        if not deadline_passed:
+            sender = self._coerce_address(gl.message.sender_address)
+            policy = self._policy(u256(int(rec["policy_id"])))
+            is_opener = sender == Address(rec["opener"])
+            is_policy_creator = sender == Address(policy["creator"])
+            is_owner = sender == self.owner
+            if not (is_opener or is_policy_creator or is_owner):
+                raise gl.vm.UserError(
+                    "EXPECTED: only the dispute opener, policy creator, or contract owner may lock "
+                    "evidence before the evidence deadline passes"
+                )
         rec["status"] = STATUS_LOCKED
         rec["resolution_deadline"] = self._add_seconds(self._now_iso(), u64(int(rec["resolution_window_seconds"])))
         self.ledger[self._dispute_key(dispute_id)] = json.dumps(rec)
@@ -737,6 +785,9 @@ class SourceWeightedDisputeResolver(gl.Contract):
 
     def _assessment_key(self, dispute_id: u256) -> str:
         return "assessment:" + str(dispute_id)
+
+    def _source_auth_key(self, policy_id: u256, source_class: str, account: Address) -> str:
+        return "source_auth:" + str(policy_id) + ":" + source_class + ":" + str(account).lower()
 
     def _source_weight(self, policy: dict, source_class: str) -> int:
         weights = policy.get("weights", {})

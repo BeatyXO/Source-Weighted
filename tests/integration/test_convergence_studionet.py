@@ -92,6 +92,9 @@ def test_weighted_assessment_converges_identically(default_account):
     factory = get_contract_factory(CONTRACT)
     contract = factory.deploy(account=default_account, transaction_context=mock_context()).connect(default_account)
     assert tx_execution_succeeded(contract.create_policy(args=policy_args()).transact(transaction_context=mock_context()))
+    assert tx_execution_succeeded(
+        contract.authorize_source(args=[1, default_account.address, "OFFICIAL"]).transact(transaction_context=mock_context())
+    )
 
     first = resolve_one(contract, 1)
     second = resolve_one(contract, 2)

@@ -44,7 +44,24 @@ def open_default(contract, direct_vm, sender, policy_id=1, callback=ZERO):
     )
 
 
-def submit(contract, direct_vm, sender, dispute_id, side, source_class, body="evidence text"):
+def authorize(contract, direct_vm, granter, policy_id, account, source_class):
+    direct_vm.sender = granter
+    contract.authorize_source(policy_id, account, source_class)
+
+
+def submit(
+    contract,
+    direct_vm,
+    sender,
+    dispute_id,
+    side,
+    source_class,
+    body="evidence text",
+    policy_id=1,
+    granter=None,
+):
+    if source_class not in ("COMMUNITY", "PARTY"):
+        authorize(contract, direct_vm, granter or sender, policy_id, sender, source_class)
     direct_vm.sender = sender
     contract.submit_evidence(dispute_id, side, source_class, body, "direct test evidence")
 
@@ -159,7 +176,7 @@ def test_submit_evidence_records_source_class(direct_vm, direct_deploy, direct_a
     contract = deploy(direct_deploy, direct_vm)
     create_policy(contract, direct_vm, direct_alice)
     dispute_id = open_default(contract, direct_vm, direct_alice)
-    submit(contract, direct_vm, direct_bob, dispute_id, "CLAIMANT", "OFFICIAL")
+    submit(contract, direct_vm, direct_bob, dispute_id, "CLAIMANT", "OFFICIAL", granter=direct_alice)
     ev = json.loads(contract.evidence_of(dispute_id, 0))
     assert ev["source_class"] == "OFFICIAL"
 
@@ -554,6 +571,93 @@ def test_double_archive_rejected(direct_vm, direct_deploy, direct_alice):
     contract.archive_dispute(dispute_id)
     with direct_vm.expect_revert("already archived"):
         contract.archive_dispute(dispute_id)
+
+
+def test_stranger_cannot_lock_evidence_before_deadline(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy(direct_deploy, direct_vm)
+    create_policy(contract, direct_vm, direct_alice)
+    dispute_id = open_default(contract, direct_vm, direct_alice)
+    submit(contract, direct_vm, direct_alice, dispute_id, "CLAIMANT", "PARTY")
+    with direct_vm.expect_revert("dispute opener, policy creator, or contract owner"):
+        lock(contract, direct_vm, dispute_id, direct_bob)
+
+
+def test_stranger_can_lock_evidence_after_deadline(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy(direct_deploy, direct_vm)
+    create_policy(contract, direct_vm, direct_alice)
+    dispute_id = open_default(contract, direct_vm, direct_alice)
+    submit(contract, direct_vm, direct_alice, dispute_id, "CLAIMANT", "PARTY")
+    warp_to(direct_vm, "2026-07-30T11:00:01Z")
+    lock(contract, direct_vm, dispute_id, direct_bob)
+    assert dispute(contract, dispute_id)["status"] == "LOCKED"
+
+
+def test_opener_can_lock_evidence_before_deadline(direct_vm, direct_deploy, direct_alice):
+    contract = deploy(direct_deploy, direct_vm)
+    create_policy(contract, direct_vm, direct_alice)
+    dispute_id = open_default(contract, direct_vm, direct_alice)
+    submit(contract, direct_vm, direct_alice, dispute_id, "CLAIMANT", "PARTY")
+    lock(contract, direct_vm, dispute_id, direct_alice)
+    assert dispute(contract, dispute_id)["status"] == "LOCKED"
+
+
+def test_submit_evidence_requires_source_authorization(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy(direct_deploy, direct_vm)
+    create_policy(contract, direct_vm, direct_alice)
+    dispute_id = open_default(contract, direct_vm, direct_alice)
+    direct_vm.sender = direct_bob
+    with direct_vm.expect_revert("not authorized for source class"):
+        contract.submit_evidence(dispute_id, "CLAIMANT", "OFFICIAL", "evidence text", "notes")
+
+
+def test_community_and_party_do_not_require_authorization(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy(direct_deploy, direct_vm)
+    create_policy(contract, direct_vm, direct_alice)
+    dispute_id = open_default(contract, direct_vm, direct_alice)
+    direct_vm.sender = direct_bob
+    contract.submit_evidence(dispute_id, "CLAIMANT", "COMMUNITY", "evidence text", "notes")
+    contract.submit_evidence(dispute_id, "CLAIMANT", "PARTY", "evidence text", "notes")
+    assert json.loads(contract.evidence_of(dispute_id, 0))["source_class"] == "COMMUNITY"
+
+
+def test_authorize_source_allows_submission(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy(direct_deploy, direct_vm)
+    policy_id = create_policy(contract, direct_vm, direct_alice)
+    dispute_id = open_default(contract, direct_vm, direct_alice)
+    authorize(contract, direct_vm, direct_alice, policy_id, direct_bob, "OFFICIAL")
+    assert contract.is_source_authorized(policy_id, direct_bob, "OFFICIAL") is True
+    direct_vm.sender = direct_bob
+    contract.submit_evidence(dispute_id, "CLAIMANT", "OFFICIAL", "evidence text", "notes")
+    assert json.loads(contract.evidence_of(dispute_id, 0))["source_class"] == "OFFICIAL"
+
+
+def test_revoke_source_removes_authorization(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy(direct_deploy, direct_vm)
+    policy_id = create_policy(contract, direct_vm, direct_alice)
+    dispute_id = open_default(contract, direct_vm, direct_alice)
+    authorize(contract, direct_vm, direct_alice, policy_id, direct_bob, "OFFICIAL")
+    direct_vm.sender = direct_alice
+    contract.revoke_source(policy_id, direct_bob, "OFFICIAL")
+    assert contract.is_source_authorized(policy_id, direct_bob, "OFFICIAL") is False
+    direct_vm.sender = direct_bob
+    with direct_vm.expect_revert("not authorized for source class"):
+        contract.submit_evidence(dispute_id, "CLAIMANT", "OFFICIAL", "evidence text", "notes")
+
+
+def test_authorize_source_requires_policy_creator_or_owner(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy(direct_deploy, direct_vm)
+    policy_id = create_policy(contract, direct_vm, direct_alice)
+    direct_vm.sender = direct_bob
+    with direct_vm.expect_revert("only policy creator or owner"):
+        contract.authorize_source(policy_id, direct_bob, "OFFICIAL")
+
+
+def test_authorize_source_rejects_self_declared_classes(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy(direct_deploy, direct_vm)
+    policy_id = create_policy(contract, direct_vm, direct_alice)
+    direct_vm.sender = direct_alice
+    with direct_vm.expect_revert("does not require authorization"):
+        contract.authorize_source(policy_id, direct_bob, "PARTY")
 
 
 def test_views_return_stats_status_verdict_and_assessment(direct_vm, direct_deploy, direct_alice):

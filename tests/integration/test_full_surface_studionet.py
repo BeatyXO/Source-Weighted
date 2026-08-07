@@ -76,6 +76,10 @@ def test_full_surface_on_studionet(default_account):
     assert tx_execution_succeeded(policy_tx)
     open_tx = contract.open_dispute(args=dispute_args(1)).transact(transaction_context=mock_context())
     assert tx_execution_succeeded(open_tx)
+    authorize_tx = contract.authorize_source(args=[1, default_account.address, "OFFICIAL"]).transact(
+        transaction_context=mock_context()
+    )
+    assert tx_execution_succeeded(authorize_tx)
     evidence0_tx = contract.submit_evidence(args=evidence_args(1, "CLAIMANT", "OFFICIAL")).transact(transaction_context=mock_context())
     assert tx_execution_succeeded(evidence0_tx)
     lock_tx = contract.lock_evidence(args=[1]).transact(transaction_context=mock_context())

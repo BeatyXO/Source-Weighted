@@ -22,6 +22,10 @@ flowchart LR
 
 Policy creators choose a minimum score, margin, and weights for `OFFICIAL`, `AUDITED`, `PRIMARY`, `EXPERT`, `NEWS`, `COMMUNITY`, and `PARTY` evidence. Evidence can be submitted as bounded text or as an HTTP(S) URL. URL evidence is fetched inside `resolve_dispute` with `gl.nondet.web.render`, capped into a compact excerpt, and passed to validators with an explicit `FETCHED` or `UNREADABLE` status. Validators classify each evidence item into enumerated buckets:
 
+Source classes above `COMMUNITY`/`PARTY` (`OFFICIAL`, `AUDITED`, `PRIMARY`, `EXPERT`, `NEWS`) are not self-declared: the policy creator or contract owner must call `authorize_source(policy_id, account, source_class)` before that account may submit evidence tagged with that class. `submit_evidence` reverts with `EXPECTED: sender not authorized for source class ...` otherwise. `COMMUNITY` and `PARTY` stay open to any submitter since they already carry the lowest configurable weight. Authorization can be withdrawn with `revoke_source` and checked with the `is_source_authorized` view.
+
+Closing the evidence window early is also gated: `lock_evidence` can only be called before the evidence deadline by the dispute opener, the policy creator, or the contract owner. Any account may call it once the evidence deadline has passed, so a dispute can never be stuck open forever, but no outside account can race to lock evidence shut the moment their own item lands.
+
 - supports: `CLAIMANT`, `RESPONDENT`, `NEITHER`, `CONFLICTING`
 - reliability: `ACCEPTED`, `STALE`, `UNREADABLE`, `OUT_OF_SCOPE`
 - strength: `HIGH`, `MEDIUM`, `LOW`, `NONE`
@@ -58,6 +62,8 @@ Writes:
 
 - `create_policy(name, description, min_score, margin, official_weight, audited_weight, primary_weight, expert_weight, news_weight, community_weight, party_weight) -> u256`
 - `deactivate_policy(policy_id)`
+- `authorize_source(policy_id, account, source_class)`
+- `revoke_source(policy_id, account, source_class)`
 - `open_dispute(policy_id, subject, claimant_position, respondent_position, evidence_window_seconds, resolution_window_seconds, callback) -> u256`
 - `submit_evidence(dispute_id, side, source_class, uri_or_text, notes)`
 - `lock_evidence(dispute_id)`
@@ -74,6 +80,7 @@ Views:
 - `assessment_of(dispute_id)`
 - `dispute_status(dispute_id)`
 - `dispute_verdict(dispute_id)`
+- `is_source_authorized(policy_id, account, source_class)`
 - `stats()`
 
 ## Development
@@ -94,11 +101,11 @@ gltest tests\integration\ -v -s --network studionet
 
 ## Measured Status
 
-Contract lines: 915. Consumer example lines: 80. Direct tests: 43 passing.
+Contract lines: 966. Consumer example lines: 80. Direct tests: 52 passing.
 
 Lint:
 
-- primitive: pass, 16 methods, 9 writes, 7 views
+- primitive: pass, 19 methods, 11 writes, 8 views
 - consumer: pass, 4 methods, 2 writes, 2 views
 
 StudioNet deployed contract:
